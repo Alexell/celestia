@@ -122,15 +122,16 @@ jobs:
       fail-fast: false
       matrix:
         config:
-        - os: ubuntu-20.04
+        - os: ubuntu:18.04
           avif: OFF     # Not supported on Ubuntu20.04
           gles: ON
           gtk3: ON
-          minaudio: ON
-          wayland: ON
+          minaudio: OFF
+          wayland: OFF
           icu: ON
           qt6: OFF
-        - os: ubuntu-22.04
+          cspice: OFF
+        - os: ubuntu:latest
           avif: ON
           gles: ON
           gtk3: ON
@@ -138,52 +139,68 @@ jobs:
           wayland: ON
           icu: ON
           qt6: ON
+          cspice: ON
           analysis_artifacts: 1
 
-    runs-on: ${{matrix.config.os}}
+    runs-on: ubuntu-latest
+    container:
+      image: "${{matrix.config.os}}"
     steps:
     - name: 'Install dependencies'
       run: |
-        sudo apt-get update
-        sudo apt-get install -y libeigen3-dev \
-                                libepoxy-dev \
-                                libavcodec-dev \
-                                libavformat-dev \
-                                libavutil-dev \
-                                libswscale-dev \
-                                libjpeg-dev \
-                                libpng-dev \
-                                libglu1-mesa-dev \
-                                libgtk-3-dev \
-                                libfreetype6-dev \
-                                libsdl2-dev \
-                                libluajit-5.1-dev \
-                                libfmt-dev \
-                                libicu-dev \
-                                libwayland-dev \
-                                wayland-protocols \
-                                gettext \
-                                gperf \
-                                ninja-build \
-                                qtbase5-dev qtbase5-dev-tools qtbase5-private-dev
+        apt-get update
+        apt-get install -y libeigen3-dev \
+                           libepoxy-dev \
+                           libavcodec-dev \
+                           libavformat-dev \
+                           libavutil-dev \
+                           libswscale-dev \
+                           libjpeg-dev \
+                           libpng-dev \
+                           libglu1-mesa-dev \
+                           libgtk-3-dev \
+                           libfreetype6-dev \
+                           libsdl2-dev \
+                           libluajit-5.1-dev \
+                           libfmt-dev \
+                           libicu-dev \
+                           libwayland-dev \
+                           wayland-protocols \
+                           gettext \
+                           gperf \
+                           ninja-build \
+                           qtbase5-dev \
+                           qtbase5-dev-tools \
+                           qtbase5-private-dev \
+                           git \
+                           cmake \
+                           ninja-build \
+                           g++ \
+                           zip
         if [ "${{matrix.config.qt6}}" = "ON" ]; then
-            sudo apt-get install -y qt6-base-dev qt6-base-dev-tools libqt6core5compat6-dev qt6-base-private-dev
+            apt-get install -y qt6-base-dev \
+                               qt6-base-dev-tools \
+                               libqt6core5compat6-dev \
+                               qt6-base-private-dev
         fi
         if [ "${{matrix.config.avif}}" = "ON" ]; then
-            sudo apt-get install -y libavif-dev
+            apt-get install -y libavif-dev
         fi
 
     - name: 'Checkout source code'
-      uses: actions/checkout@v3
-      with:
-        submodules: true
+      run: |
+        git config --global --add safe.directory $(pwd)
+        git clone --depth=1 --recurse-submodules -j2 https://github.com/CelestiaProject/Celestia.git .
+        git checkout "$GITHUB_REF"
 
     - name: 'Configure CMake'
+      working-directory: /__w/Celestia/Celestia
       run: |
-        cmake -B ${{github.workspace}}/build            \
-              -G Ninja                                  \
+        mkdir build
+        cd build
+        cmake -G Ninja                                  \
               -DENABLE_GLES=${{matrix.config.gles}}     \
-              -DENABLE_SPICE=ON                         \
+              -DENABLE_SPICE=${{matrix.config.cspice}}  \
               -DENABLE_TOOLS=OFF                        \
               -DENABLE_TESTS=ON                         \
               -DENABLE_SDL=ON                           \
@@ -195,18 +212,21 @@ jobs:
               -DENABLE_FFMPEG=ON                        \
               -DENABLE_LIBAVIF=${{matrix.config.avif}}  \
               -DENABLE_MINIAUDIO=${{matrix.config.minaudio}} \
-              -DUSE_ICU=${{matrix.config.icu}}
+              -DUSE_ICU=${{matrix.config.icu}}          \
+              ..
 
     - name: Build
-      working-directory: ${{github.workspace}}/build
+      working-directory: /__w/Celestia/Celestia/build
       run: ninja
 
     - name: Test
-      working-directory: ${{github.workspace}}/build
+      working-directory: /__w/Celestia/Celestia/build
       run: ctest
 
     - name: 'Package autogenerated headers'
       if: ${{ success() && matrix.config.analysis_artifacts }}
+      working-directory: /__w/Celestia/Celestia
+      shell: bash
       run: |
         shopt -s globstar
         zip celestia-autogenerated-headers  \
@@ -215,7 +235,9 @@ jobs:
 
     - name: 'Write PR details'
       if: ${{ success() && github.event_name == 'pull_request' && matrix.config.analysis_artifacts }}
+      working-directory: /__w/Celestia/Celestia
       run: |
+        printenv
         echo "PR_KEY=${{ github.event.number }}" > pr-details.txt
         echo "PR_BRANCH=${{ github.event.pull_request.head.ref }}" >> pr-details.txt
         echo "PR_BASE=${{ github.event.pull_request.base.ref }}" >> pr-details.txt
